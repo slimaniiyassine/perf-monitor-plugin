@@ -25,4 +25,6 @@ class PerfMonitorService(private val project: Project) {
     }
 
     fun getConnectedDevice(): String? = AdbRunner.getConnectedDevice()
+
+
 }

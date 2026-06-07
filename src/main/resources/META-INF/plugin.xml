@@ -5,7 +5,7 @@
     <description><![CDATA[
         Performance monitoring plugin for Android apps.
         Captures Memory, CPU, Network, Battery and UI rendering
-        sessions and analyses them with GitHub Copilot.
+        sessions and analyses them with Claude or GitHub Copilot.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -13,16 +13,33 @@
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
+
+        <!-- Tool window -->
         <toolWindow
                 factoryClass="com.perfmonitor.toolWindow.PerfToolWindowFactory"
                 id="Perf Monitor"
                 anchor="bottom"
                 canCloseContents="false"
                 secondary="false"/>
+
+        <!-- Startup activity -->
         <postStartupActivity
                 implementation="com.perfmonitor.startup.PerfMonitorActivity"/>
+
+        <!-- Project-level service: holds session data -->
         <projectService
                 serviceImplementation="com.perfmonitor.services.PerfMonitorService"/>
+
+        <!-- App-level service: holds settings + API key -->
+        <applicationService
+                serviceImplementation="com.perfmonitor.PerfMonitorSettings"/>
+
+        <!-- Settings page under Preferences → Perf Monitor -->
+        <applicationConfigurable
+                instance="com.perfmonitor.SettingsConfigurable"
+                id="com.perfmonitor.settings"
+                displayName="Perf Monitor"/>
+
     </extensions>
 
 </idea-plugin>
