@@ -21,6 +21,8 @@
                 secondary="false"/>
         <postStartupActivity
                 implementation="com.perfmonitor.startup.PerfMonitorActivity"/>
+        <projectService
+                serviceImplementation="com.perfmonitor.services.PerfMonitorService"/>
     </extensions>
 
 </idea-plugin>
