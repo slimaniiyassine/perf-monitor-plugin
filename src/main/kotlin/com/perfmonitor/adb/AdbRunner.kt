@@ -66,6 +66,10 @@ object AdbRunner {
             ?.trim()
     }
 
+    fun isDeviceConnected(): Boolean {
+        return getConnectedDevice() != null
+    }
+
     fun getForegroundPackage(): String? {
         val output = runCommand(adbPath, "shell", "dumpsys", "activity", "activities")
         return output.lines()

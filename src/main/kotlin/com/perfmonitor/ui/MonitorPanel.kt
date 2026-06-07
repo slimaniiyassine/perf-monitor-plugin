@@ -2,23 +2,23 @@ package com.perfmonitor.ui
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import com.perfmonitor.PerfMonitorSettings
 import com.perfmonitor.adb.AdbRunner
 import com.perfmonitor.ai.ClaudeClient
 import com.perfmonitor.ai.GeminiClient
 import com.perfmonitor.ai.PromptBuilder
-import java.awt.BorderLayout
-import java.awt.Dimension
-import java.awt.FlowLayout
-import java.awt.Font
-import java.awt.Toolkit
+import java.awt.*
 import java.awt.datatransfer.StringSelection
 import java.io.File
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import javax.swing.*
+import javax.swing.border.EmptyBorder
 import javax.swing.text.DefaultStyledDocument
+import javax.swing.text.SimpleAttributeSet
+import javax.swing.text.StyleConstants
 
 class MonitorPanel(
     private val project: Project,
@@ -29,24 +29,27 @@ class MonitorPanel(
 
     val panel = JPanel(BorderLayout())
 
-    // ── Captured data area ───────────────────────────────────────────
-    private val outputDoc = DefaultStyledDocument()
+    // ── Documents ────────────────────────────────────────────────────
+    private val outputDoc   = DefaultStyledDocument()
+    private val analysisDoc = DefaultStyledDocument()
+
+    // ── Text areas ───────────────────────────────────────────────────
     private val outputArea = JTextPane(outputDoc).apply {
         isEditable = false
         font = Font(Font.MONOSPACED, Font.PLAIN, 12)
-        text = "Select a process and a mode, then start a session."
-        foreground = UIManager.getColor("TextArea.foreground") ?: java.awt.Color.WHITE
-        background = UIManager.getColor("TextArea.background") ?: java.awt.Color(43, 43, 43)
+        background = JBColor(Color(245, 245, 245), Color(30, 30, 30))
+        foreground = JBColor(Color(40, 40, 40), Color(200, 200, 200))
+        border = EmptyBorder(8, 10, 8, 10)
+        text = "Run a session to see captured data here."
     }
 
-    // ── Analysis area ────────────────────────────────────────────────
-    private val analysisDoc = DefaultStyledDocument()
     private val analysisArea = JTextPane(analysisDoc).apply {
         isEditable = false
-        font = Font(Font.MONOSPACED, Font.PLAIN, 12)
-        text = "Analysis will appear here after you click Analyse."
-        foreground = UIManager.getColor("TextArea.foreground") ?: java.awt.Color.WHITE
-        background = UIManager.getColor("TextArea.background") ?: java.awt.Color(43, 43, 43)
+        font = Font("Helvetica Neue", Font.PLAIN, 13)
+        background = JBColor(Color(252, 252, 255), Color(28, 28, 35))
+        foreground = JBColor(Color(30, 30, 30), Color(210, 210, 220))
+        border = EmptyBorder(10, 14, 10, 14)
+        text = "Click ✦ Analyse after capturing data to see AI insights here."
     }
 
     // ── Progress bar ─────────────────────────────────────────────────
@@ -54,47 +57,49 @@ class MonitorPanel(
         isIndeterminate = true
         isVisible = false
         isStringPainted = true
-        string = "Analysing..."
-        preferredSize = Dimension(0, 4)
+        string = "  Analysing with AI..."
+        preferredSize = Dimension(0, 22)
+        foreground = JBColor(Color(99, 102, 241), Color(129, 140, 248))
     }
 
+    // ── Status label ─────────────────────────────────────────────────
     private val statusLabel = JLabel("Ready").apply {
+        font = font.deriveFont(Font.PLAIN, 11f)
+        foreground = JBColor(Color(100, 100, 100), Color(150, 150, 150))
         border = JBUI.Borders.emptyLeft(8)
     }
 
+    // ── Process combo ─────────────────────────────────────────────────
     private val processCombo = JComboBox<String>().apply {
-        preferredSize = Dimension(260, 28)
+        preferredSize = Dimension(240, 28)
         toolTipText = "Select the app process to monitor"
+        font = font.deriveFont(12f)
     }
 
-    // Mode toggle
-    private val snapshotRadio = JRadioButton("Snapshot", true)
-    private val recordRadio   = JRadioButton("Record")
-    private val modeGroup     = ButtonGroup().also {
-        it.add(snapshotRadio); it.add(recordRadio)
-    }
+    // ── Mode toggle ──────────────────────────────────────────────────
+    private val snapshotRadio = JRadioButton("Snapshot", true).apply { font = font.deriveFont(12f) }
+    private val recordRadio   = JRadioButton("Record").apply { font = font.deriveFont(12f) }
+    private val modeGroup     = ButtonGroup().also { it.add(snapshotRadio); it.add(recordRadio) }
 
-    // Interval controls
+    // ── Interval controls ─────────────────────────────────────────────
     private val intervalCombo = JComboBox(arrayOf("1s", "2s", "5s", "10s", "30s", "Custom")).apply {
-        preferredSize = Dimension(80, 28)
+        preferredSize = Dimension(75, 28)
+        font = font.deriveFont(12f)
     }
     private val customSpinner = JSpinner(SpinnerNumberModel(3, 1, 300, 1)).apply {
-        preferredSize = Dimension(60, 28)
+        preferredSize = Dimension(58, 28)
         isVisible = false
     }
     private val intervalUnit = JLabel("s").apply { isVisible = false }
 
-    // Buttons
-    private val refreshButton = JButton("⟳").apply { toolTipText = "Refresh process list" }
-    private val startButton   = JButton("▶ Start").apply { isEnabled = false }
-    private val stopButton    = JButton("⏹ Stop").apply { isEnabled = false }
-    private val clearButton   = JButton("Clear").apply { isEnabled = false }
-    private val analyseButton = JButton("✦ Analyse").apply {
-        isEnabled = false
-        toolTipText = "Analyse captured data with AI"
-    }
+    // ── Buttons ───────────────────────────────────────────────────────
+    private val refreshButton = styledButton("⟳", tooltip = "Refresh process list", small = true)
+    private val startButton   = styledButton("▶  Start", primary = true).apply { isEnabled = false }
+    private val stopButton    = styledButton("⏹  Stop").apply { isEnabled = false; isVisible = false }
+    private val clearButton   = styledButton("Clear").apply { isEnabled = false }
+    private val analyseButton = styledButton("✦  Analyse", accent = true).apply { isEnabled = false }
 
-    // Recording state
+    // ── State ─────────────────────────────────────────────────────────
     private var isRecording  = false
     private var recordThread: Thread? = null
     private val samples      = mutableListOf<String>()
@@ -102,70 +107,49 @@ class MonitorPanel(
     private var currentMode  = "Snapshot"
 
     init {
-        // ── Row 1: process picker ────────────────────────────────────
-        val row1 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
-            add(JLabel("Process:"))
-            add(processCombo)
-            add(refreshButton)
+        // ── Toolbar ──────────────────────────────────────────────────
+        val toolbar = buildToolbar()
+
+        // ── Left pane: captured data ──────────────────────────────────
+        val leftScroll = JScrollPane(outputArea).apply {
+            border = titledBorder("📊  Captured Data")
+            background = outputArea.background
         }
 
-        // ── Row 2: mode + interval + buttons ────────────────────────
-        val row2 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
-            add(JLabel("Mode:"))
-            add(snapshotRadio)
-            add(recordRadio)
-            add(JSeparator(SwingConstants.VERTICAL).apply { preferredSize = Dimension(2, 22) })
-            add(JLabel("Every:"))
-            add(intervalCombo)
-            add(customSpinner)
-            add(intervalUnit)
-            add(JSeparator(SwingConstants.VERTICAL).apply { preferredSize = Dimension(2, 22) })
-            add(startButton)
-            add(stopButton)
-            add(clearButton)
-            add(JSeparator(SwingConstants.VERTICAL).apply { preferredSize = Dimension(2, 22) })
-            add(analyseButton)
-            add(statusLabel)
-        }
-
-        val toolbar = JPanel(BorderLayout()).apply {
-            add(row1, BorderLayout.NORTH)
-            add(row2, BorderLayout.SOUTH)
-            border = JBUI.Borders.emptyBottom(4)
-        }
-
-        // ── Use JSplitPane instead of JBSplitter ─────────────────────
-        val outputScroll = JScrollPane(outputArea).apply {
-            border = BorderFactory.createTitledBorder("Captured Data")
-        }
-
-        val analysisPanel = JPanel(BorderLayout()).apply {
+        // ── Right pane: AI analysis ───────────────────────────────────
+        val rightPane = JPanel(BorderLayout()).apply {
+            background = analysisArea.background
             add(analysisProgressBar, BorderLayout.NORTH)
-            add(JScrollPane(analysisArea), BorderLayout.CENTER)
-            border = BorderFactory.createTitledBorder("AI Analysis")
+            add(JScrollPane(analysisArea).apply {
+                border = BorderFactory.createEmptyBorder()
+                background = analysisArea.background
+            }, BorderLayout.CENTER)
+            border = titledBorder("✦  AI Analysis")
         }
 
-        val splitPane = JSplitPane(JSplitPane.VERTICAL_SPLIT, outputScroll, analysisPanel).apply {
-            resizeWeight = 0.55
+        // ── Horizontal split ──────────────────────────────────────────
+        val splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftScroll, rightPane).apply {
+            resizeWeight     = 0.45
             isContinuousLayout = true
-            dividerSize = 6
+            dividerSize      = 5
+            background       = JBColor.background()
         }
 
         panel.add(toolbar, BorderLayout.NORTH)
         panel.add(splitPane, BorderLayout.CENTER)
-        panel.border = JBUI.Borders.empty(4)
+        panel.border = JBUI.Borders.empty(6)
+        panel.background = JBColor.background()
 
-        // Set divider after panel is shown
+        // Set divider after layout
         SwingUtilities.invokeLater {
-            val h = splitPane.height
-            if (h > 0) splitPane.dividerLocation = (h * 0.55).toInt()
+            val w = splitPane.width
+            if (w > 0) splitPane.dividerLocation = (w * 0.45).toInt()
         }
 
-        // ── Listeners ────────────────────────────────────────────────
+        // ── Wire up listeners ─────────────────────────────────────────
         updateModeControls()
         snapshotRadio.addActionListener { updateModeControls() }
         recordRadio.addActionListener   { updateModeControls() }
-
         intervalCombo.addActionListener {
             val isCustom = intervalCombo.selectedItem == "Custom"
             customSpinner.isVisible = isCustom
@@ -174,10 +158,7 @@ class MonitorPanel(
 
         loadProcesses()
         refreshButton.addActionListener { loadProcesses() }
-
-        processCombo.addActionListener {
-            startButton.isEnabled = processCombo.selectedItem != null
-        }
+        processCombo.addActionListener  { startButton.isEnabled = processCombo.selectedItem != null }
 
         startButton.addActionListener {
             val pkg = selectedPackage() ?: return@addActionListener
@@ -185,11 +166,11 @@ class MonitorPanel(
             if (snapshotRadio.isSelected) runSnapshot(pkg) else startRecording(pkg)
         }
 
-        stopButton.addActionListener { stopRecording() }
+        stopButton.addActionListener  { stopRecording() }
 
         clearButton.addActionListener {
             outputArea.text   = ""
-            analysisArea.text = "Analysis will appear here after you click Analyse."
+            setAnalysisText("Analysis will appear here after you click ✦ Analyse.")
             samples.clear()
             statusLabel.text        = "Cleared"
             clearButton.isEnabled   = false
@@ -202,10 +183,46 @@ class MonitorPanel(
         }
     }
 
+    // ── Toolbar builder ───────────────────────────────────────────────
+    private fun buildToolbar(): JPanel {
+        val row1 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
+            isOpaque = false
+            add(JLabel("Process:").apply { font = font.deriveFont(12f) })
+            add(processCombo)
+            add(refreshButton)
+        }
+
+        val row2 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
+            isOpaque = false
+            add(JLabel("Mode:").apply { font = font.deriveFont(12f) })
+            add(snapshotRadio)
+            add(recordRadio)
+            add(vSep())
+            add(JLabel("Every:").apply { font = font.deriveFont(12f) })
+            add(intervalCombo)
+            add(customSpinner)
+            add(intervalUnit)
+            add(vSep())
+            add(startButton)
+            add(stopButton)
+            add(clearButton)
+            add(vSep())
+            add(analyseButton)
+            add(statusLabel)
+        }
+
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(row1, BorderLayout.NORTH)
+            add(row2, BorderLayout.SOUTH)
+            border = JBUI.Borders.empty(0, 0, 6, 0)
+        }
+    }
+
     // ── Snapshot ──────────────────────────────────────────────────────
     private fun runSnapshot(pkg: String) {
         setCapturing(true)
-        outputArea.text = "Taking snapshot for $pkg ..."
+        outputArea.text = "Capturing $monitorName snapshot for $pkg ..."
 
         Thread {
             val result = safeCapture(pkg)
@@ -222,12 +239,12 @@ class MonitorPanel(
 
     // ── Record ────────────────────────────────────────────────────────
     private fun startRecording(pkg: String) {
-        isRecording = true
+        isRecording   = true
         samples.clear()
-        outputArea.text   = ""
-        analysisArea.text = "Analysis will appear here after you stop recording and click Analyse."
+        outputArea.text = ""
+        setAnalysisText("Analysis will appear after you stop recording and click ✦ Analyse.")
         setRecording(true)
-        statusLabel.text  = "Recording $monitorName..."
+        statusLabel.text = "Recording $monitorName..."
 
         val intervalMs = if (intervalCombo.selectedItem == "Custom") {
             (customSpinner.value as Int) * 1000L
@@ -243,8 +260,8 @@ class MonitorPanel(
                 val sample = "── Sample $n @ $ts ──────────\n$data\n"
                 samples.add(sample)
                 SwingUtilities.invokeLater {
-                    outputArea.document.insertString(outputArea.document.length, sample, null)
-                    outputArea.caretPosition = outputArea.document.length
+                    outputDoc.insertString(outputDoc.length, sample, null)
+                    outputArea.caretPosition = outputDoc.length
                     statusLabel.text = "Recording — ${samples.size} samples"
                 }
                 n++
@@ -276,8 +293,8 @@ class MonitorPanel(
         }
 
         analyseButton.isEnabled       = false
-        analysisArea.text             = ""
-        statusLabel.text              = "Analysing with ${settings.provider}..."
+        setAnalysisText("")
+        statusLabel.text              = "Analysing..."
         analysisProgressBar.isVisible = true
 
         when (settings.provider) {
@@ -288,20 +305,26 @@ class MonitorPanel(
     }
 
     private fun appendToAnalysis(text: String) {
-        println("APPEND_CALLED: length=${text.length} first50=${text.take(50)}")
         try {
-            analysisDoc.insertString(analysisDoc.length, text, null)
-            println("APPEND_DONE: docLength=${analysisDoc.length}")
+            val attrs = SimpleAttributeSet()
+            analysisDoc.insertString(analysisDoc.length, text, attrs)
             analysisArea.caretPosition = analysisDoc.length
-        } catch (e: Exception) {
-            println("APPEND_ERROR: ${e.message}")
+        } catch (_: Exception) {}
+    }
+
+    private fun setAnalysisText(text: String) {
+        try {
+            analysisDoc.remove(0, analysisDoc.length)
+            if (text.isNotEmpty()) appendToAnalysis(text)
+        } catch (_: Exception) {
+            analysisArea.text = text
         }
     }
 
     private fun runClaudeAnalysis(pkg: String, data: String, apiKey: String) {
         if (apiKey.isBlank()) {
             SwingUtilities.invokeLater {
-                analysisArea.text             = "⚠ No Claude API key set.\n\nGo to Settings → Perf Monitor and add your key from console.anthropic.com"
+                setAnalysisText("⚠ No Claude API key set.\n\nGo to Settings → Perf Monitor and add your key from console.anthropic.com")
                 analyseButton.isEnabled       = true
                 analysisProgressBar.isVisible = false
                 statusLabel.text              = "No API key configured"
@@ -330,7 +353,7 @@ class MonitorPanel(
     private fun runGeminiAnalysis(pkg: String, data: String, apiKey: String) {
         if (apiKey.isBlank()) {
             SwingUtilities.invokeLater {
-                analysisArea.text             = "⚠ No Gemini API key set.\n\nGo to Settings → Perf Monitor and add your free key from aistudio.google.com"
+                setAnalysisText("⚠ No Gemini API key set.\n\nGo to Settings → Perf Monitor and add your free key from aistudio.google.com")
                 analyseButton.isEnabled       = true
                 analysisProgressBar.isVisible = false
                 statusLabel.text              = "No API key configured"
@@ -345,9 +368,8 @@ class MonitorPanel(
                 println("TOKEN_RECEIVED: length=${token.length}")
                 SwingUtilities.invokeLater { appendToAnalysis(token) }
             },
-            onDone = { SwingUtilities.invokeLater {
+            onDone  = { SwingUtilities.invokeLater {
                 println("ANALYSIS_DOC_LENGTH: ${analysisDoc.length}")
-                println("ANALYSIS_TEXT: ${analysisDoc.getText(0, minOf(100, analysisDoc.length))}")
                 statusLabel.text              = "Analysis complete at ${now()}"
                 analyseButton.isEnabled       = true
                 analysisProgressBar.isVisible = false
@@ -363,7 +385,7 @@ class MonitorPanel(
 
     private fun runCopilotAnalysis(pkg: String, data: String) {
         try {
-            val markdown = PromptBuilder.buildCopilotMarkdown(monitorName, pkg, currentMode, data)
+            val markdown  = PromptBuilder.buildCopilotMarkdown(monitorName, pkg, currentMode, data)
             val clipboard = Toolkit.getDefaultToolkit().systemClipboard
             clipboard.setContents(StringSelection(markdown), null)
 
@@ -374,14 +396,13 @@ class MonitorPanel(
 
             SwingUtilities.invokeLater {
                 try {
-                    val twm     = ToolWindowManager.getInstance(project)
-                    val copilot = twm.getToolWindow("GitHub Copilot Chat")
+                    val twm = ToolWindowManager.getInstance(project)
+                    (twm.getToolWindow("GitHub Copilot Chat")
                         ?: twm.getToolWindow("Copilot Chat")
-                        ?: twm.getToolWindow("GitHub Copilot")
-                    copilot?.show()
+                        ?: twm.getToolWindow("GitHub Copilot"))?.show()
                 } catch (_: Exception) {}
 
-                analysisArea.text = """
+                setAnalysisText("""
                     ✓ Prompt copied to clipboard!
                     
                     Just paste and send:
@@ -390,14 +411,14 @@ class MonitorPanel(
                     3. Press Enter
                     
                     (Prompt also saved to .perf-monitor/${monitorName.lowercase()}-analysis.md)
-                """.trimIndent()
+                """.trimIndent())
                 statusLabel.text              = "Prompt copied — paste into Copilot Chat"
                 analyseButton.isEnabled       = true
                 analysisProgressBar.isVisible = false
             }
         } catch (e: Exception) {
             SwingUtilities.invokeLater {
-                analysisArea.text             = "⚠ Error: ${e.message}"
+                setAnalysisText("⚠ Error: ${e.message}")
                 statusLabel.text              = "Failed"
                 analyseButton.isEnabled       = true
                 analysisProgressBar.isVisible = false
@@ -406,7 +427,8 @@ class MonitorPanel(
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
-    private fun safeCapture(pkg: String) = try { onCapture(pkg) } catch (e: Exception) { "Error: ${e.message}" }
+    private fun safeCapture(pkg: String) =
+        try { onCapture(pkg) } catch (e: Exception) { "Error: ${e.message}" }
 
     private fun selectedPackage(): String? {
         val item = processCombo.selectedItem as? String
@@ -441,13 +463,58 @@ class MonitorPanel(
 
     private fun now() = LocalTime.now().format(timeFmt)
 
+    private fun vSep() = JSeparator(SwingConstants.VERTICAL).apply {
+        preferredSize = Dimension(2, 22)
+    }
+
+    private fun titledBorder(title: String) =
+        BorderFactory.createTitledBorder(
+            BorderFactory.createLineBorder(JBColor(Color(220, 220, 220), Color(60, 60, 60)), 1, true),
+            title,
+            0, 0,
+            Font("Helvetica Neue", Font.BOLD, 11),
+            JBColor(Color(100, 100, 100), Color(160, 160, 160))
+        )
+
+    private fun styledButton(
+        text: String,
+        tooltip: String? = null,
+        small: Boolean = false,
+        primary: Boolean = false,
+        accent: Boolean = false
+    ) = JButton(text).apply {
+        toolTipText = tooltip
+        font = if (small) font.deriveFont(11f) else font.deriveFont(12f)
+        isFocusPainted = false
+        if (primary) {
+            background = JBColor(Color(59, 130, 246), Color(37, 99, 235))
+            foreground = Color.WHITE
+            isOpaque   = true
+        }
+        if (accent) {
+            background = JBColor(Color(99, 102, 241), Color(79, 70, 229))
+            foreground = Color.WHITE
+            isOpaque   = true
+        }
+    }
+
     private fun loadProcesses() {
         refreshButton.isEnabled = false
         startButton.isEnabled   = false
-        statusLabel.text        = "Loading processes..."
+        statusLabel.text        = "Checking for device..."
         processCombo.removeAllItems()
 
         Thread {
+            // Check device connection first
+            if (!AdbRunner.isDeviceConnected()) {
+                SwingUtilities.invokeLater {
+                    processCombo.addItem("No device connected")
+                    statusLabel.text        = "⚠ No device — start emulator or connect device, then click ⟳"
+                    refreshButton.isEnabled = true
+                }
+                return@Thread
+            }
+
             val processes = try {
                 ProcessBuilder(AdbRunner.resolvedAdbPath(), "shell", "ps", "-e")
                     .redirectErrorStream(true).start()
@@ -455,22 +522,33 @@ class MonitorPanel(
                     .drop(1)
                     .mapNotNull { line ->
                         val parts = line.trim().split("\\s+".toRegex())
-                        parts.lastOrNull()?.takeIf { it.contains(".") && !it.startsWith("[") }
+                        parts.lastOrNull()?.takeIf {
+                            it.contains(".") &&
+                                    !it.startsWith("[") &&
+                                    !it.startsWith("/") &&   // ← filters out adb path
+                                    it.length < 100           // ← sanity check
+                        }
                     }
                     .distinct().sorted()
-            } catch (e: Exception) { listOf("Error: ${e.message}") }
+            } catch (e: Exception) { emptyList() }
+
+            if (processes.isEmpty()) {
+                SwingUtilities.invokeLater {
+                    statusLabel.text        = "⚠ No processes found — is the app running?"
+                    refreshButton.isEnabled = true
+                }
+                return@Thread
+            }
 
             val foreground = AdbRunner.getForegroundPackage()
 
             SwingUtilities.invokeLater {
                 processes.forEach { processCombo.addItem(it) }
-
                 val toSelect = foreground ?: defaultPackage.takeIf { it.isNotBlank() }
                 if (toSelect != null) {
                     val match = processes.indexOfFirst { it.contains(toSelect) }
                     if (match >= 0) processCombo.selectedIndex = match
                 }
-
                 startButton.isEnabled   = processCombo.selectedItem != null
                 refreshButton.isEnabled = true
                 statusLabel.text        = if (foreground != null)
