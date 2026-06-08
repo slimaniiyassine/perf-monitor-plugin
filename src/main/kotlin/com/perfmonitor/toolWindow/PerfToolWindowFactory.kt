@@ -37,20 +37,42 @@ class PerfToolWindowFactory : ToolWindowFactory {
             font = font.deriveFont(Font.PLAIN, 11f)
         }
 
-        // ── Build panels — they receive the shared combo ──────────────
-        val memoryPanel  = MonitorPanel(project, "Memory",   sharedProcessCombo) { pkg -> service.captureSession(pkg).memory  }
-        val cpuPanel     = MonitorPanel(project, "CPU",      sharedProcessCombo) { pkg -> service.captureSession(pkg).cpu     }
-        val networkPanel = MonitorPanel(project, "Network",  sharedProcessCombo) { pkg -> service.captureSession(pkg).network }
-        val batteryPanel = MonitorPanel(project, "Battery",  sharedProcessCombo) { pkg -> service.captureSession(pkg).battery }
-        val uiPanel      = MonitorPanel(project, "UI / FPS", sharedProcessCombo) { pkg -> service.captureSession(pkg).uiFps   }
+        // ── Shared AI provider combo ──────────────────────────────────
+        val sharedProviderCombo = JComboBox(arrayOf("Gemini", "Claude", "Copilot")).apply {
+            preferredSize = Dimension(100, 28)
+            font          = font.deriveFont(12f)
+            toolTipText   = "AI provider for analysis"
+            selectedItem  = when (com.perfmonitor.PerfMonitorSettings.instance().provider) {
+                "CLAUDE"  -> "Claude"
+                "COPILOT" -> "Copilot"
+                else      -> "Gemini"
+            }
+        }
+        sharedProviderCombo.addActionListener {
+            com.perfmonitor.PerfMonitorSettings.instance().provider = when (sharedProviderCombo.selectedItem) {
+                "Claude"  -> "CLAUDE"
+                "Copilot" -> "COPILOT"
+                else      -> "GEMINI"
+            }
+        }
 
-        // ── Process picker row shared at the top ──────────────────────
+        // ── Build panels — they receive the shared combos ─────────────
+        val memoryPanel  = MonitorPanel(project, "Memory",   sharedProcessCombo, sharedProviderCombo) { pkg -> service.captureSession(pkg).memory  }
+        val cpuPanel     = MonitorPanel(project, "CPU",      sharedProcessCombo, sharedProviderCombo) { pkg -> service.captureSession(pkg).cpu     }
+        val networkPanel = MonitorPanel(project, "Network",  sharedProcessCombo, sharedProviderCombo) { pkg -> service.captureSession(pkg).network }
+        val batteryPanel = MonitorPanel(project, "Battery",  sharedProcessCombo, sharedProviderCombo) { pkg -> service.captureSession(pkg).battery }
+        val uiPanel      = MonitorPanel(project, "UI / FPS", sharedProcessCombo, sharedProviderCombo) { pkg -> service.captureSession(pkg).uiFps   }
+
+        // ── Process + AI picker row shared at the top ────────────────
         val processRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
             isOpaque = false
             add(JLabel("Process:").apply { font = font.deriveFont(12f) })
             add(sharedProcessCombo)
             add(sharedRefreshButton)
             add(sharedStatusLabel)
+            add(JSeparator(SwingConstants.VERTICAL).apply { preferredSize = Dimension(2, 22) })
+            add(JLabel("AI:").apply { font = font.deriveFont(12f) })
+            add(sharedProviderCombo)
         }
 
         // ── Tabs ──────────────────────────────────────────────────────

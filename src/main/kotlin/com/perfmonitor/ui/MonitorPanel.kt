@@ -22,7 +22,8 @@ import javax.swing.text.StyleConstants
 class MonitorPanel(
     private val project: Project,
     private val monitorName: String,
-    private val processCombo: JComboBox<String>,   // ← shared from factory
+    private val processCombo: JComboBox<String>,    // ← shared from factory
+    private val providerCombo: JComboBox<String>,   // ← shared from factory
     private val onCapture: (packageName: String) -> String
 ) {
 
@@ -62,17 +63,6 @@ class MonitorPanel(
         font = font.deriveFont(Font.PLAIN, 11f)
         foreground = JBColor(Color(100, 100, 100), Color(150, 150, 150))
         border = JBUI.Borders.emptyLeft(8)
-    }
-
-    private val providerCombo = JComboBox(arrayOf("Gemini", "Claude", "Copilot")).apply {
-        preferredSize = Dimension(100, 28)
-        font = font.deriveFont(12f)
-        toolTipText = "AI provider for analysis"
-        selectedItem = when (PerfMonitorSettings.instance().provider) {
-            "CLAUDE"  -> "Claude"
-            "COPILOT" -> "Copilot"
-            else      -> "Gemini"
-        }
     }
 
     private val snapshotRadio = JRadioButton("Snapshot", true).apply { font = font.deriveFont(12f); isOpaque = false }
@@ -144,14 +134,6 @@ class MonitorPanel(
             intervalUnit.isVisible  = isCustom
         }
 
-        providerCombo.addActionListener {
-            PerfMonitorSettings.instance().provider = when (providerCombo.selectedItem) {
-                "Claude"  -> "CLAUDE"
-                "Copilot" -> "COPILOT"
-                else      -> "GEMINI"
-            }
-        }
-
         // Enable/disable start when shared combo changes
         processCombo.addActionListener {
             startButton.isEnabled = selectedPackage() != null
@@ -181,12 +163,6 @@ class MonitorPanel(
     }
 
     private fun buildToolbar(): JPanel {
-        val row1 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
-            isOpaque = false
-            add(JLabel("AI:").apply { font = font.deriveFont(12f) })
-            add(providerCombo)
-        }
-
         val row2 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
             isOpaque = false
             add(JLabel("Mode:").apply { font = font.deriveFont(12f) })
@@ -208,8 +184,7 @@ class MonitorPanel(
 
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(row1, BorderLayout.NORTH)
-            add(row2, BorderLayout.SOUTH)
+            add(row2, BorderLayout.CENTER)
             border = JBUI.Borders.empty(0, 0, 6, 0)
         }
     }
@@ -333,6 +308,8 @@ class MonitorPanel(
         analyseButton.isEnabled       = true
         analyseButton.stopAnimation()
         analysisProgressBar.isVisible = false
+        // Scroll back to top so user reads from the beginning
+        SwingUtilities.invokeLater { analysisArea.caretPosition = 0 }
     }
 
     private fun failAnalysis(err: String) {
