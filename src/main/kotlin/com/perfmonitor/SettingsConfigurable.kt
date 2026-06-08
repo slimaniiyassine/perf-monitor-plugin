@@ -1,6 +1,7 @@
 package com.perfmonitor
 
 import com.intellij.openapi.options.Configurable
+import com.perfmonitor.ai.CopilotCliClient
 import java.awt.*
 import java.net.HttpURLConnection
 import java.net.URI
@@ -17,7 +18,9 @@ class SettingsConfigurable : Configurable {
     private lateinit var geminiStatusLabel: JLabel
     private lateinit var claudeSection: JPanel
     private lateinit var geminiSection: JPanel
-    private lateinit var copilotInfo: JLabel
+    private lateinit var copilotSection: JPanel
+    private lateinit var clipboardRadio: JRadioButton
+    private lateinit var cliRadio: JRadioButton
 
     override fun getDisplayName() = "Perf Monitor"
 
@@ -36,8 +39,8 @@ class SettingsConfigurable : Configurable {
             "Claude (Anthropic)",
             "Gemini (Google AI Studio)"
         )).apply {
-            maximumSize  = Dimension(Int.MAX_VALUE, 32)
-            alignmentX   = Component.LEFT_ALIGNMENT
+            maximumSize   = Dimension(Int.MAX_VALUE, 32)
+            alignmentX    = Component.LEFT_ALIGNMENT
             selectedIndex = when (settings.provider) {
                 "CLAUDE" -> 1
                 "GEMINI" -> 2
@@ -55,12 +58,13 @@ class SettingsConfigurable : Configurable {
             getLinkUrl   = "https://console.anthropic.com/settings/keys",
             keyFieldInit = settings.claudeApiKey,
             onFieldReady = { claudeKeyField = it },
-            onStatusReady= { claudeStatusLabel = it },
-            onTest       = { key, btn, status ->
+            onStatusReady = { claudeStatusLabel = it },
+            onTest = { key, btn, status ->
                 testClaudeKey(key) { ok, msg ->
                     SwingUtilities.invokeLater {
                         btn.isEnabled = true
-                        setStatus(status, if (ok) "✓ $msg" else "✗ $msg", if (ok) Color(34, 160, 82) else Color(200, 60, 60))
+                        setStatus(status, if (ok) "✓ $msg" else "✗ $msg",
+                            if (ok) Color(34, 160, 82) else Color(200, 60, 60))
                     }
                 }
             }
@@ -76,12 +80,13 @@ class SettingsConfigurable : Configurable {
             getLinkUrl   = "https://aistudio.google.com/apikey",
             keyFieldInit = settings.geminiApiKey,
             onFieldReady = { geminiKeyField = it },
-            onStatusReady= { geminiStatusLabel = it },
-            onTest       = { key, btn, status ->
+            onStatusReady = { geminiStatusLabel = it },
+            onTest = { key, btn, status ->
                 testGeminiKey(key) { ok, msg ->
                     SwingUtilities.invokeLater {
                         btn.isEnabled = true
-                        setStatus(status, if (ok) "✓ $msg" else "✗ $msg", if (ok) Color(34, 160, 82) else Color(200, 60, 60))
+                        setStatus(status, if (ok) "✓ $msg" else "✗ $msg",
+                            if (ok) Color(34, 160, 82) else Color(200, 60, 60))
                     }
                 }
             }
@@ -89,22 +94,15 @@ class SettingsConfigurable : Configurable {
         content.add(geminiSection)
         content.add(vgap(16))
 
-        // ── Copilot info ──────────────────────────────────────────────
-        copilotInfo = JLabel("<html><body style='width:380px'>" +
-                "<b>GitHub Copilot Chat:</b> the prompt is copied to your clipboard " +
-                "and Copilot Chat opens automatically — just press Cmd+V and Enter." +
-                "</body></html>").apply {
-            alignmentX = Component.LEFT_ALIGNMENT
-            foreground = Color(120, 120, 120)
-            font = font.deriveFont(12f)
-        }
-        content.add(copilotInfo)
+        // ── Copilot section ───────────────────────────────────────────
+        copilotSection = buildCopilotSection(settings)
+        content.add(copilotSection)
 
         // ── Visibility ────────────────────────────────────────────────
         fun updateVisibility() {
             claudeSection.isVisible  = providerCombo.selectedIndex == 1
             geminiSection.isVisible  = providerCombo.selectedIndex == 2
-            copilotInfo.isVisible    = providerCombo.selectedIndex == 0
+            copilotSection.isVisible = providerCombo.selectedIndex == 0
             root.revalidate(); root.repaint()
         }
         updateVisibility()
@@ -114,7 +112,109 @@ class SettingsConfigurable : Configurable {
         return root
     }
 
-    // ── Section builder ───────────────────────────────────────────────
+    // ── Copilot section builder ───────────────────────────────────────
+    private fun buildCopilotSection(settings: PerfMonitorSettings): JPanel {
+        val panel = JPanel().apply {
+            layout     = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = Component.LEFT_ALIGNMENT
+            isOpaque   = false
+        }
+
+        panel.add(sectionLabel("GitHub Copilot Mode"))
+        panel.add(vgap(6))
+
+        // Mode radio buttons
+        val modeGroup = ButtonGroup()
+        clipboardRadio = JRadioButton("Clipboard — copy prompt, paste into Copilot Chat manually").apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            isSelected = settings.copilotMode != "CLI"
+            isOpaque   = false
+        }
+        cliRadio = JRadioButton("CLI — stream response directly into the plugin panel").apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            isSelected = settings.copilotMode == "CLI"
+            isOpaque   = false
+            isEnabled  = false  // disabled until detected
+        }
+        modeGroup.add(clipboardRadio)
+        modeGroup.add(cliRadio)
+        panel.add(clipboardRadio)
+        panel.add(vgap(4))
+        panel.add(cliRadio)
+        panel.add(vgap(8))
+
+        // Detect CLI row
+        val detectBtn   = JButton("Detect CLI").apply { font = font.deriveFont(11f) }
+        val cliStatus   = JLabel("Click 'Detect CLI' to check if Copilot CLI is installed").apply {
+            font       = font.deriveFont(Font.PLAIN, 11f)
+            foreground = Color(120, 120, 120)
+        }
+        val detectRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+            isOpaque   = false
+            alignmentX = Component.LEFT_ALIGNMENT
+            add(detectBtn)
+            add(cliStatus)
+        }
+        panel.add(detectRow)
+        panel.add(vgap(6))
+
+        // Info label
+        panel.add(JLabel("<html><body style='width:400px'>" +
+                "<b>Clipboard mode:</b> prompt is copied to clipboard and Copilot Chat opens — press Cmd+V and Enter.<br><br>" +
+                "<b>CLI mode:</b> uses <code>copilot -p</code> to stream the response directly into the analysis panel. " +
+                "Requires Copilot CLI installed (<code>npm install -g @github/copilot-cli</code>) and authenticated." +
+                "</body></html>").apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            foreground = Color(120, 120, 120)
+            font       = font.deriveFont(12f)
+        })
+
+        // If CLI was previously selected, try to re-enable the radio
+        if (settings.copilotMode == "CLI") {
+            Thread {
+                val ok = CopilotCliClient.isAvailable()
+                SwingUtilities.invokeLater {
+                    cliRadio.isEnabled  = ok
+                    if (!ok) {
+                        clipboardRadio.isSelected = true
+                        cliStatus.text      = "✗ CLI not found — select Clipboard mode or install CLI"
+                        cliStatus.foreground = Color(200, 60, 60)
+                    } else {
+                        cliStatus.text       = "✓ ${CopilotCliClient.getVersion()}"
+                        cliStatus.foreground = Color(34, 160, 82)
+                    }
+                }
+            }.also { it.isDaemon = true }.start()
+        }
+
+        // Detect button action
+        detectBtn.addActionListener {
+            detectBtn.isEnabled  = false
+            cliStatus.text       = "Detecting..."
+            cliStatus.foreground = Color(100, 100, 100)
+            Thread {
+                val available = CopilotCliClient.isAvailable()
+                val version   = if (available) CopilotCliClient.getVersion() else ""
+                SwingUtilities.invokeLater {
+                    detectBtn.isEnabled = true
+                    if (available) {
+                        cliStatus.text       = "✓ $version"
+                        cliStatus.foreground = Color(34, 160, 82)
+                        cliRadio.isEnabled   = true
+                    } else {
+                        cliStatus.text       = "✗ Not found — run: npm install -g @github/copilot-cli"
+                        cliStatus.foreground = Color(200, 60, 60)
+                        cliRadio.isEnabled   = false
+                        clipboardRadio.isSelected = true
+                    }
+                }
+            }.also { it.isDaemon = true }.start()
+        }
+
+        return panel
+    }
+
+    // ── Key section builder ───────────────────────────────────────────
     private fun buildKeySection(
         labelText: String,
         hintText: String,
@@ -134,24 +234,20 @@ class SettingsConfigurable : Configurable {
             anchor = GridBagConstraints.WEST
         }
 
-        // Label row
         gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 4; gbc.fill = GridBagConstraints.NONE
         panel.add(sectionLabel(labelText), gbc)
         gbc.gridwidth = 1
 
-        // Key field
         val keyField = JPasswordField(keyFieldInit, 36)
         onFieldReady(keyField)
         gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 1.0; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.gridwidth = 2
         panel.add(keyField, gbc)
         gbc.gridwidth = 1; gbc.weightx = 0.0; gbc.fill = GridBagConstraints.NONE
 
-        // Test button
         val testBtn = JButton("Test Key").apply { font = font.deriveFont(11f); preferredSize = Dimension(80, 28) }
         gbc.gridx = 2; gbc.gridy = 1
         panel.add(testBtn, gbc)
 
-        // Get Key link button
         val getBtn = JButton(getLinkText).apply {
             font = font.deriveFont(Font.PLAIN, 11f)
             isBorderPainted     = false
@@ -162,7 +258,6 @@ class SettingsConfigurable : Configurable {
         gbc.gridx = 3; gbc.gridy = 1
         panel.add(getBtn, gbc)
 
-        // Status label
         val status = JLabel(hintText).apply {
             font       = font.deriveFont(Font.PLAIN, 11f)
             foreground = Color(120, 120, 120)
@@ -171,7 +266,6 @@ class SettingsConfigurable : Configurable {
         gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 4; gbc.fill = GridBagConstraints.HORIZONTAL
         panel.add(status, gbc)
 
-        // Wire actions
         testBtn.addActionListener {
             val key = String(keyField.password).trim()
             if (key.isBlank()) {
@@ -209,13 +303,11 @@ class SettingsConfigurable : Configurable {
                     403  -> callback(false, "Key lacks permission")
                     429  -> callback(true,  "Key valid but rate limited — add credits at console.anthropic.com")
                     else -> {
-                        val err = conn.errorStream?.bufferedReader()?.readText() ?: "HTTP ${conn.responseCode}"
-                        // Check for credit balance error
-                        if (err.contains("credit") || err.contains("balance")) {
-                            callback(false, "Key valid but no credits — add credits at console.anthropic.com")
-                        } else {
+                        val err = conn.errorStream?.bufferedReader()?.readText() ?: ""
+                        if (err.contains("credit") || err.contains("balance"))
+                            callback(false, "Key valid but no credits — add at console.anthropic.com")
+                        else
                             callback(false, "HTTP ${conn.responseCode}")
-                        }
                     }
                 }
             } catch (e: Exception) { callback(false, "Connection error: ${e.message}") }
@@ -257,7 +349,7 @@ class SettingsConfigurable : Configurable {
     }
 
     private fun setStatus(label: JLabel, text: String, color: Color) {
-        label.text      = text
+        label.text       = text
         label.foreground = color
     }
 
@@ -269,14 +361,16 @@ class SettingsConfigurable : Configurable {
         val s = PerfMonitorSettings.instance()
         return providerIndexToKey(providerCombo.selectedIndex) != s.provider ||
                 String(claudeKeyField.password) != s.claudeApiKey ||
-                String(geminiKeyField.password) != s.geminiApiKey
+                String(geminiKeyField.password) != s.geminiApiKey ||
+                (if (cliRadio.isSelected) "CLI" else "CLIPBOARD") != s.copilotMode
     }
 
     override fun apply() {
-        val s      = PerfMonitorSettings.instance()
+        val s          = PerfMonitorSettings.instance()
         s.provider     = providerIndexToKey(providerCombo.selectedIndex)
         s.claudeApiKey = String(claudeKeyField.password)
         s.geminiApiKey = String(geminiKeyField.password)
+        s.copilotMode  = if (cliRadio.isSelected) "CLI" else "CLIPBOARD"
     }
 
     private fun providerIndexToKey(idx: Int) = when (idx) {

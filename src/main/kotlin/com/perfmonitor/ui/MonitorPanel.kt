@@ -6,6 +6,7 @@ import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import com.perfmonitor.PerfMonitorSettings
 import com.perfmonitor.ai.ClaudeClient
+import com.perfmonitor.ai.CopilotCliClient
 import com.perfmonitor.ai.GeminiClient
 import com.perfmonitor.ai.PromptBuilder
 import java.awt.*
@@ -22,8 +23,8 @@ import javax.swing.text.StyleConstants
 class MonitorPanel(
     private val project: Project,
     private val monitorName: String,
-    private val processCombo: JComboBox<String>,    // ← shared from factory
-    private val providerCombo: JComboBox<String>,   // ← shared from factory
+    private val processCombo: JComboBox<String>,
+    private val providerCombo: JComboBox<String>,
     private val onCapture: (packageName: String) -> String
 ) {
 
@@ -121,7 +122,6 @@ class MonitorPanel(
         SwingUtilities.invokeLater {
             val w = splitPane.width
             if (w > 0) splitPane.dividerLocation = (w * 0.45).toInt()
-            // Enable start if a real process is already selected
             startButton.isEnabled = selectedPackage() != null
         }
 
@@ -134,7 +134,6 @@ class MonitorPanel(
             intervalUnit.isVisible  = isCustom
         }
 
-        // Enable/disable start when shared combo changes
         processCombo.addActionListener {
             startButton.isEnabled = selectedPackage() != null
         }
@@ -308,7 +307,6 @@ class MonitorPanel(
         analyseButton.isEnabled       = true
         analyseButton.stopAnimation()
         analysisProgressBar.isVisible = false
-        // Scroll back to top so user reads from the beginning
         SwingUtilities.invokeLater { analysisArea.caretPosition = 0 }
     }
 
@@ -362,7 +360,36 @@ class MonitorPanel(
         )
     }
 
+    // ── Copilot: branches on CLI vs Clipboard mode ────────────────────
     private fun runCopilotAnalysis(pkg: String, data: String) {
+        val settings = PerfMonitorSettings.instance()
+        if (settings.copilotMode == "CLI") {
+            runCopilotCliAnalysis(pkg, data)
+        } else {
+            runCopilotClipboardAnalysis(pkg, data)
+        }
+    }
+
+    private fun runCopilotCliAnalysis(pkg: String, data: String) {
+        val prompt = PromptBuilder.build(monitorName, pkg, currentMode, data)
+        statusLabel.text = "Analysing with Copilot CLI..."
+        CopilotCliClient.analyse(
+            prompt  = prompt,
+            onToken = { token -> SwingUtilities.invokeLater { appendToAnalysis(token) } },
+            onDone  = { SwingUtilities.invokeLater { finishAnalysis() } },
+            onError = { err ->
+                SwingUtilities.invokeLater {
+                    // If CLI fails, surface a helpful message
+                    failAnalysis(
+                        "$err\n\nTip: Make sure Copilot CLI is installed and authenticated.\n" +
+                                "Run: copilot --version in terminal to verify."
+                    )
+                }
+            }
+        )
+    }
+
+    private fun runCopilotClipboardAnalysis(pkg: String, data: String) {
         try {
             val markdown  = PromptBuilder.buildCopilotMarkdown(monitorName, pkg, currentMode, data)
             val clipboard = Toolkit.getDefaultToolkit().systemClipboard
