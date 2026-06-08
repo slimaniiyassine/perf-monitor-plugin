@@ -123,4 +123,9 @@ object AdbRunner {
     fun captureUiFps(packageName: String): String {
         return runCommand(adbPath, "shell", "dumpsys", "gfxinfo", packageName)
     }
+
+    fun runShellCommand(vararg args: String): String {
+        return runCommand(adbPath, "shell", *args)
+    }
+
 }

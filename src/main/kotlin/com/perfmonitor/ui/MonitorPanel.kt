@@ -83,6 +83,10 @@ class MonitorPanel(
     private val clearButton   = RoundedButton("Clear").apply { isEnabled = false }
     private val analyseButton = GradientButton("✦  Analyse").apply { isEnabled = false }
 
+    // ── Source file picker ────────────────────────────────────────────
+    // Lazily created so we have the package name available
+    private var sourceFilePicker: SourceFilePicker? = null
+
     private var isRecording  = false
     private var recordThread: Thread? = null
     private val samples      = mutableListOf<String>()
@@ -92,11 +96,13 @@ class MonitorPanel(
     init {
         val toolbar = buildToolbar()
 
+        // ── Left pane: captured data ──────────────────────────────────
         val leftScroll = JScrollPane(outputArea).apply {
             border = titledBorder("📊  Captured Data")
             background = outputArea.background
         }
 
+        // ── Right pane: source picker (top) + analysis (bottom) ───────
         val rightPane = JPanel(BorderLayout()).apply {
             background = JBColor(Color(245, 245, 245), Color(30, 30, 30))
             add(analysisProgressBar, BorderLayout.NORTH)
@@ -107,6 +113,11 @@ class MonitorPanel(
             border = titledBorder("✦  AI Analysis")
         }
 
+        // Source picker panel — created lazily, shown below toolbar
+        val sourcePickerWrapper = JPanel(BorderLayout()).apply {
+            isOpaque = false
+        }
+
         val splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftScroll, rightPane).apply {
             resizeWeight       = 0.45
             isContinuousLayout = true
@@ -114,8 +125,15 @@ class MonitorPanel(
             background         = JBColor.background()
         }
 
+        // Outer layout: toolbar → source picker → split pane
+        val centerPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(sourcePickerWrapper, BorderLayout.NORTH)
+            add(splitPane, BorderLayout.CENTER)
+        }
+
         panel.add(toolbar, BorderLayout.NORTH)
-        panel.add(splitPane, BorderLayout.CENTER)
+        panel.add(centerPanel, BorderLayout.CENTER)
         panel.border     = JBUI.Borders.empty(6)
         panel.background = JBColor.background()
 
@@ -136,6 +154,12 @@ class MonitorPanel(
 
         processCombo.addActionListener {
             startButton.isEnabled = selectedPackage() != null
+            // Rebuild source picker when process changes
+            val pkg = selectedPackage() ?: return@addActionListener
+            sourceFilePicker = SourceFilePicker(project, monitorName, pkg)
+            sourcePickerWrapper.removeAll()
+            sourcePickerWrapper.add(sourceFilePicker!!.panel, BorderLayout.CENTER)
+            sourcePickerWrapper.revalidate()
         }
 
         startButton.addActionListener {
@@ -257,6 +281,10 @@ class MonitorPanel(
             return
         }
 
+        // Append source context to the data
+        val sourceContext = sourceFilePicker?.buildSourceContext() ?: ""
+        val enrichedData  = data + sourceContext
+
         analyseButton.isEnabled       = false
         analyseButton.startAnimation()
         setAnalysisText("")
@@ -264,9 +292,9 @@ class MonitorPanel(
         analysisProgressBar.isVisible = true
 
         when (settings.provider) {
-            "CLAUDE" -> runClaudeAnalysis(pkg, data, settings.claudeApiKey)
-            "GEMINI" -> runGeminiAnalysis(pkg, data, settings.geminiApiKey)
-            else     -> runCopilotAnalysis(pkg, data)
+            "CLAUDE" -> runClaudeAnalysis(pkg, enrichedData, settings.claudeApiKey)
+            "GEMINI" -> runGeminiAnalysis(pkg, enrichedData, settings.geminiApiKey)
+            else     -> runCopilotAnalysis(pkg, enrichedData)
         }
     }
 
@@ -360,30 +388,27 @@ class MonitorPanel(
         )
     }
 
-    // ── Copilot: branches on CLI vs Clipboard mode ────────────────────
     private fun runCopilotAnalysis(pkg: String, data: String) {
         val settings = PerfMonitorSettings.instance()
-        if (settings.copilotMode == "CLI") {
-            runCopilotCliAnalysis(pkg, data)
-        } else {
-            runCopilotClipboardAnalysis(pkg, data)
-        }
+        if (settings.copilotMode == "CLI") runCopilotCliAnalysis(pkg, data)
+        else runCopilotClipboardAnalysis(pkg, data)
     }
 
     private fun runCopilotCliAnalysis(pkg: String, data: String) {
         val prompt = PromptBuilder.build(monitorName, pkg, currentMode, data)
         statusLabel.text = "Analysing with Copilot CLI..."
+
+        // For CLI mode also pass selected files as --context flags
+        val contextFiles = sourceFilePicker?.selectedFiles ?: emptyList()
+
         CopilotCliClient.analyse(
-            prompt  = prompt,
+            prompt       = prompt,
+            contextFiles = contextFiles.map { it.path },
             onToken = { token -> SwingUtilities.invokeLater { appendToAnalysis(token) } },
             onDone  = { SwingUtilities.invokeLater { finishAnalysis() } },
             onError = { err ->
                 SwingUtilities.invokeLater {
-                    // If CLI fails, surface a helpful message
-                    failAnalysis(
-                        "$err\n\nTip: Make sure Copilot CLI is installed and authenticated.\n" +
-                                "Run: copilot --version in terminal to verify."
-                    )
+                    failAnalysis("$err\n\nTip: Make sure Copilot CLI is installed and authenticated.")
                 }
             }
         )
