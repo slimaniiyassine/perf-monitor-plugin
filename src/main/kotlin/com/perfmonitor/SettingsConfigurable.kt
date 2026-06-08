@@ -365,6 +365,19 @@ class SettingsConfigurable : Configurable {
                 (if (cliRadio.isSelected) "CLI" else "CLIPBOARD") != s.copilotMode
     }
 
+    override fun reset() {
+        val settings = PerfMonitorSettings.instance()
+        providerCombo.selectedIndex = when (settings.provider) {
+            "CLAUDE" -> 1
+            "GEMINI" -> 2
+            else     -> 0
+        }
+        // Update visibility
+        claudeSection.isVisible  = providerCombo.selectedIndex == 1
+        geminiSection.isVisible  = providerCombo.selectedIndex == 2
+        copilotSection.isVisible = providerCombo.selectedIndex == 0
+    }
+
     override fun apply() {
         val s          = PerfMonitorSettings.instance()
         s.provider     = providerIndexToKey(providerCombo.selectedIndex)

@@ -11,7 +11,7 @@ class PerfMonitorSettings : PersistentStateComponent<PerfMonitorSettings.State> 
 
     data class State(
         var provider: String    = "COPILOT",
-        var copilotMode: String = "CLIPBOARD"  // "CLIPBOARD" or "CLI"
+        var copilotMode: String = "CLIPBOARD"
     )
 
     private var state = State()
@@ -21,7 +21,11 @@ class PerfMonitorSettings : PersistentStateComponent<PerfMonitorSettings.State> 
 
     var provider: String
         get() = state.provider
-        set(v) { state.provider = v }
+        set(v) {
+            state.provider = v
+            // Notify all listeners so toolbar and settings stay in sync
+            providerListeners.forEach { it(v) }
+        }
 
     var copilotMode: String
         get() = state.copilotMode
@@ -46,6 +50,16 @@ class PerfMonitorSettings : PersistentStateComponent<PerfMonitorSettings.State> 
     }
 
     companion object {
+        private val providerListeners = mutableListOf<(String) -> Unit>()
+
+        fun addProviderListener(listener: (String) -> Unit) {
+            providerListeners.add(listener)
+        }
+
+        fun removeProviderListener(listener: (String) -> Unit) {
+            providerListeners.remove(listener)
+        }
+
         fun instance(): PerfMonitorSettings = service()
     }
 }

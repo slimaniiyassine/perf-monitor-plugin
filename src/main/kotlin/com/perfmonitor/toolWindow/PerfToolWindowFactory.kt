@@ -6,6 +6,7 @@ import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.content.ContentFactory
+import com.perfmonitor.PerfMonitorSettings
 import com.perfmonitor.adb.AdbRunner
 import com.perfmonitor.services.PerfMonitorService
 import com.perfmonitor.ui.MonitorPanel
@@ -22,7 +23,7 @@ class PerfToolWindowFactory : ToolWindowFactory {
         val contentFactory = ContentFactory.getInstance()
         val detectedPkg    = detectPackageName(project)
 
-        // ── Single shared process combo used by ALL tabs ──────────────
+        // ── Shared process combo ──────────────────────────────────────
         val sharedProcessCombo = JComboBox<String>().apply {
             preferredSize = Dimension(240, 28)
             toolTipText   = "Select the app process to monitor"
@@ -42,28 +43,51 @@ class PerfToolWindowFactory : ToolWindowFactory {
             preferredSize = Dimension(100, 28)
             font          = font.deriveFont(12f)
             toolTipText   = "AI provider for analysis"
-            selectedItem  = when (com.perfmonitor.PerfMonitorSettings.instance().provider) {
+            selectedItem  = when (PerfMonitorSettings.instance().provider) {
                 "CLAUDE"  -> "Claude"
                 "COPILOT" -> "Copilot"
                 else      -> "Gemini"
             }
         }
+
+        // Guard flag — prevents feedback loop when listener updates the combo
+        var updatingFromSettings = false
+
+        // ── Listen for changes from Settings page ─────────────────────
+        val providerListener: (String) -> Unit = { provider ->
+            SwingUtilities.invokeLater {
+                val item = when (provider) {
+                    "CLAUDE"  -> "Claude"
+                    "COPILOT" -> "Copilot"
+                    else      -> "Gemini"
+                }
+                if (sharedProviderCombo.selectedItem != item) {
+                    updatingFromSettings = true
+                    sharedProviderCombo.selectedItem = item
+                    updatingFromSettings = false
+                }
+            }
+        }
+        PerfMonitorSettings.addProviderListener(providerListener)
+
+        // ── Save to settings when user changes it in toolbar ──────────
         sharedProviderCombo.addActionListener {
-            com.perfmonitor.PerfMonitorSettings.instance().provider = when (sharedProviderCombo.selectedItem) {
+            if (updatingFromSettings) return@addActionListener
+            PerfMonitorSettings.instance().provider = when (sharedProviderCombo.selectedItem) {
                 "Claude"  -> "CLAUDE"
                 "Copilot" -> "COPILOT"
                 else      -> "GEMINI"
             }
         }
 
-        // ── Build panels — they receive the shared combos ─────────────
+        // ── Build panels ──────────────────────────────────────────────
         val memoryPanel  = MonitorPanel(project, "Memory",   sharedProcessCombo, sharedProviderCombo) { pkg -> service.captureSession(pkg).memory  }
         val cpuPanel     = MonitorPanel(project, "CPU",      sharedProcessCombo, sharedProviderCombo) { pkg -> service.captureSession(pkg).cpu     }
         val networkPanel = MonitorPanel(project, "Network",  sharedProcessCombo, sharedProviderCombo) { pkg -> service.captureSession(pkg).network }
         val batteryPanel = MonitorPanel(project, "Battery",  sharedProcessCombo, sharedProviderCombo) { pkg -> service.captureSession(pkg).battery }
         val uiPanel      = MonitorPanel(project, "UI / FPS", sharedProcessCombo, sharedProviderCombo) { pkg -> service.captureSession(pkg).uiFps   }
 
-        // ── Process + AI picker row shared at the top ────────────────
+        // ── Top bar ───────────────────────────────────────────────────
         val processRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
             isOpaque = false
             add(JLabel("Process:").apply { font = font.deriveFont(12f) })
@@ -88,10 +112,10 @@ class PerfToolWindowFactory : ToolWindowFactory {
             add(tabs, BorderLayout.CENTER)
         }
 
-        // ── Load processes once for all tabs ──────────────────────────
+        // ── Load processes ────────────────────────────────────────────
         fun loadProcesses() {
-            sharedRefreshButton.isEnabled  = false
-            sharedStatusLabel.text         = "Checking for device..."
+            sharedRefreshButton.isEnabled = false
+            sharedStatusLabel.text        = "Checking for device..."
             sharedProcessCombo.removeAllItems()
 
             Thread {
