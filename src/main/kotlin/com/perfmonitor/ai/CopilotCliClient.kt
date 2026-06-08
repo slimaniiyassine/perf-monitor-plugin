@@ -43,6 +43,7 @@ object CopilotCliClient {
     fun analyse(
         prompt: String,
         contextFiles: List<String> = emptyList(),
+        projectPath: String? = null,
         onToken: (String) -> Unit,
         onDone: () -> Unit,
         onError: (String) -> Unit
@@ -53,16 +54,20 @@ object CopilotCliClient {
                 tmpFile.writeText(prompt)
                 tmpFile.deleteOnExit()
 
-                // Build --context flags for each selected source file
-                val contextFlags = contextFiles
-                    .filter { File(it).exists() }
-                    .joinToString(" ") { "--context '${it.replace("'", "\\'")}'" }
-
-                // Build the full command — no --model flag, uses Copilot default
+                // Build the command
                 val cmd = buildString {
                     append("'$nodePath' '$resolvedScript'")
                     append(" -p \"\$(cat '${tmpFile.absolutePath}')\"")
-                    if (contextFlags.isNotBlank()) append(" $contextFlags")
+
+                    // Give Copilot access to the project directory so it can
+                    // read files itself — much better than injecting content
+                    if (projectPath != null) {
+                        append(" --add-dir '${projectPath.replace("'", "\\'")}'")
+                    }
+
+                    // Allow Copilot to read files autonomously without prompting
+                    append(" --allow-all-paths")
+                    append(" --allow-tool=read")
                     append(" -s --no-ask-user")
                 }
 

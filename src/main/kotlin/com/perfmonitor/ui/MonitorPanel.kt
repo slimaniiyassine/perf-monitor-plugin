@@ -404,7 +404,8 @@ class MonitorPanel(
         CopilotCliClient.analyse(
             prompt       = prompt,
             contextFiles = contextFiles.map { it.path },
-            onToken = { token -> SwingUtilities.invokeLater { appendToAnalysis(token) } },
+            projectPath  = project.basePath,
+            onToken ={ token -> SwingUtilities.invokeLater { appendToAnalysis(token) } },
             onDone  = { SwingUtilities.invokeLater { finishAnalysis() } },
             onError = { err ->
                 SwingUtilities.invokeLater {
