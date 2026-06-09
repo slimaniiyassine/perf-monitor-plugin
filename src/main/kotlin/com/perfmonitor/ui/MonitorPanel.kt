@@ -444,9 +444,14 @@ class MonitorPanel(
         val prompt   = PromptBuilder.buildFinalSummary(monitorName, pkgRef, currentMode, capturedDataRef, fileResults)
         val settings = PerfMonitorSettings.instance()
 
+        // Collect the final summary text so we can write it to the report file
+        val summaryBuffer = StringBuilder()
+
         val onToken: (String) -> Unit = { token ->
-            if (!analysisAborted.get())
+            if (!analysisAborted.get()) {
+                summaryBuffer.append(token)
                 SwingUtilities.invokeLater { appendToAnalysis(token) }
+            }
         }
         val onDone: () -> Unit = {
             SwingUtilities.invokeLater {
@@ -454,8 +459,36 @@ class MonitorPanel(
                 stopAnalysisButton.isEnabled  = false
                 analyseButton.isEnabled       = true
                 analyseButton.stopAnimation()
-                statusLabel.text              = "Analysis complete at ${now()}"
                 analysisArea.caretPosition    = 0
+
+                // ── Write report to disk ──────────────────────────────
+                val basePath = project.basePath
+                if (basePath != null) {
+                    try {
+                        val reportFile = com.perfmonitor.report.ReportWriter.write(
+                            projectBasePath  = basePath,
+                            monitorName      = monitorName,
+                            packageName      = pkgRef,
+                            sessionMode      = currentMode,
+                            foregroundScreen = screenRef,
+                            capturedData     = capturedDataRef,
+                            fileResults      = fileResults,
+                            finalSummary     = summaryBuffer.toString(),
+                            selectedFileNames = (sourceFilePicker?.selectedFiles ?: emptyList())
+                                .map { it.name }
+                        )
+                        statusLabel.text = "✓ Analysis complete — report saved to ${reportFile.name}"
+
+                        // Append a clickable note at the bottom of the analysis panel
+                        appendToAnalysis("\n\n")
+                        insertFileDivider("💾  Report saved")
+                        appendToAnalysis("\n📄 ${reportFile.path}")
+                    } catch (e: Exception) {
+                        statusLabel.text = "Analysis complete (report save failed: ${e.message})"
+                    }
+                } else {
+                    statusLabel.text = "Analysis complete at ${now()}"
+                }
             }
         }
         val onError: (String) -> Unit = { err -> SwingUtilities.invokeLater { failAnalysis(err) } }
@@ -518,8 +551,8 @@ class MonitorPanel(
             clipboard.setContents(StringSelection(markdown), null)
 
             val basePath = project.basePath ?: throw Exception("No project path found")
-            File("$basePath/.perf-monitor").mkdirs()
-            File("$basePath/.perf-monitor/${monitorName.lowercase()}-analysis.md").writeText(markdown)
+            File("$basePath/perf-monitor").mkdirs()
+            File("$basePath/perf-monitor/${monitorName.lowercase()}-analysis.md").writeText(markdown)
 
             SwingUtilities.invokeLater {
                 try {
