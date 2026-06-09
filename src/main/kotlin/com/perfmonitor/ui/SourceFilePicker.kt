@@ -52,6 +52,10 @@ class SourceFilePicker(
     val sendFullContent: Boolean
         get() = fullRadio.isSelected
 
+    // Exposed so MonitorPanel can pass it to PromptBuilder
+    var foregroundScreen: String = ""
+        private set
+
     private val fullRadio       = JRadioButton("Full", true).apply { font = font.deriveFont(11f); isOpaque = false }
     private val signaturesRadio = JRadioButton("Signatures").apply { font = font.deriveFont(11f); isOpaque = false }
     private val modeGroup       = ButtonGroup().also { it.add(fullRadio); it.add(signaturesRadio) }
@@ -83,7 +87,6 @@ class SourceFilePicker(
         panel.add(toolbar, BorderLayout.NORTH)
         panel.add(scroll, BorderLayout.CENTER)
 
-        // ── Button actions ────────────────────────────────────────────
         detectBtn.addActionListener { detectFiles() }
 
         addBtn.addActionListener {
@@ -124,14 +127,28 @@ class SourceFilePicker(
         checkboxItems.clear()
 
         Thread {
+            // Capture foreground screen at detection time
+            val screen   = SourceFileDetector.getForegroundScreen()
             val detected = SourceFileDetector.detectRelevantFiles(project, monitorName, packageName)
+
             SwingUtilities.invokeLater {
+                foregroundScreen = screen ?: ""
+
                 if (detected.isEmpty()) {
-                    statusLabel.text = "No files detected — use + Add to add manually"
+                    statusLabel.text = if (screen == null)
+                        "No foreground screen detected — start your app then click ⟳ Detect"
+                    else
+                        "No files found for $screen — use + Add to add manually"
                 } else {
                     detected.forEach { addFileRow(it.virtualFile, it.reason, checked = it.selected) }
                     updateStatus()
+                    // Append screen name to status so the user knows what was used
+                    if (screen != null) {
+                        val cur = statusLabel.text
+                        statusLabel.text = "$cur  •  from $screen"
+                    }
                 }
+
                 detectBtn.isEnabled = true
                 fileListPanel.revalidate()
                 fileListPanel.repaint()
@@ -187,37 +204,43 @@ class SourceFilePicker(
         preferredSize = Dimension(2, 18)
     }
 
-    // ── Build source context for prompt ───────────────────────────────
     fun buildSourceContext(): String {
         if (selectedFiles.isEmpty()) return ""
 
+        val MAX_TOTAL_CHARS = 12_000   // safe for all providers
+        val MAX_PER_FILE    = 3_000
+
         val sb = StringBuilder()
-        sb.appendLine("\n--- SOURCE CONTEXT (${selectedFiles.size} files) ---")
+        sb.appendLine("\n--- SOURCE CONTEXT (${selectedFiles.size} files from ${foregroundScreen.ifBlank { "manual selection" }}) ---")
+
+        var remaining = MAX_TOTAL_CHARS
 
         selectedFiles.forEach { file ->
-            sb.appendLine("\n### ${file.name}")
+            if (remaining <= 0) return@forEach
+            sb.appendLine("\n### ${file.name}  [${file.path}]")
             try {
                 val content = String(file.contentsToByteArray())
-                if (sendFullContent) {
-                    val lines = content.lines()
-                    if (lines.size > 300) {
-                        sb.appendLine(lines.take(300).joinToString("\n"))
-                        sb.appendLine("... (truncated, ${lines.size - 300} more lines)")
-                    } else {
-                        sb.appendLine(content)
+                val excerpt = if (sendFullContent) {
+                    content.take(MAX_PER_FILE).let {
+                        if (content.length > MAX_PER_FILE)
+                            "$it\n// ... (${content.length - MAX_PER_FILE} chars truncated)"
+                        else it
                     }
                 } else {
                     content.lines()
                         .filter { line ->
                             val t = line.trim()
-                            t.startsWith("class ")      || t.startsWith("object ")     ||
-                                    t.startsWith("interface ")  || t.startsWith("fun ")        ||
-                                    t.startsWith("override fun")|| t.startsWith("private fun") ||
-                                    t.startsWith("val ")        || t.startsWith("var ")        ||
-                                    t.startsWith("@")           || t.contains("suspend fun")
+                            t.startsWith("class ")       || t.startsWith("object ")      ||
+                                    t.startsWith("interface ")   || t.startsWith("fun ")         ||
+                                    t.startsWith("override fun") || t.startsWith("private fun")  ||
+                                    t.startsWith("val ")         || t.startsWith("var ")         ||
+                                    t.startsWith("@")            || t.contains("suspend fun")
                         }
-                        .forEach { sb.appendLine(it) }
+                        .joinToString("\n")
+                        .take(MAX_PER_FILE)
                 }
+                sb.appendLine(excerpt)
+                remaining -= excerpt.length
             } catch (_: Exception) {
                 sb.appendLine("// Could not read file")
             }
@@ -225,5 +248,4 @@ class SourceFilePicker(
 
         sb.appendLine("\n--- END SOURCE CONTEXT ---")
         return sb.toString()
-    }
-}
+    }}
