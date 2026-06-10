@@ -3,6 +3,7 @@ package com.perfmonitor.ui
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
@@ -34,17 +35,18 @@ class SourceFilePicker(
         background = JBColor(Color(245, 245, 245), Color(30, 30, 30))
     }
 
-    private val statusLabel = JLabel("Click ⟳ Detect to find relevant source files").apply {
+    private val statusLabel = JLabel("Capture a session first, then click ⟳ Detect").apply {
         font       = font.deriveFont(Font.PLAIN, 11f)
         foreground = JBColor(Color(120, 120, 120), Color(150, 150, 150))
         border     = JBUI.Borders.emptyLeft(4)
     }
 
-    private val detectBtn    = JButton("⟳ Detect").apply { font = font.deriveFont(11f) }
-    private val addBtn       = JButton("+ Add").apply { font = font.deriveFont(11f) }
-    private val selectAllBtn = JButton("✓ All").apply { font = font.deriveFont(11f); toolTipText = "Select all" }
-    private val deselectBtn  = JButton("✗ None").apply { font = font.deriveFont(11f); toolTipText = "Deselect all" }
-    private val clearBtn     = JButton("Clear").apply { font = font.deriveFont(11f); toolTipText = "Remove all files" }
+    // Both disabled until a session is captured — enabled via enableControls()
+    private val detectBtn    = JButton("⟳ Detect").apply { font = font.deriveFont(11f); isEnabled = false }
+    private val addBtn       = JButton("+ Add").apply { font = font.deriveFont(11f); isEnabled = false }
+    private val selectAllBtn = JButton("✓ All").apply { font = font.deriveFont(11f); toolTipText = "Select all"; isEnabled = false }
+    private val deselectBtn  = JButton("✗ None").apply { font = font.deriveFont(11f); toolTipText = "Deselect all"; isEnabled = false }
+    private val clearBtn     = JButton("Clear").apply { font = font.deriveFont(11f); toolTipText = "Remove all files"; isEnabled = false }
 
     val selectedFiles: List<VirtualFile>
         get() = checkboxItems.filter { it.first.isSelected }.map { it.second }
@@ -52,7 +54,6 @@ class SourceFilePicker(
     val sendFullContent: Boolean
         get() = fullRadio.isSelected
 
-    // Exposed so MonitorPanel can pass it to PromptBuilder
     var foregroundScreen: String = ""
         private set
 
@@ -61,6 +62,19 @@ class SourceFilePicker(
     private val modeGroup       = ButtonGroup().also { it.add(fullRadio); it.add(signaturesRadio) }
 
     private val checkboxItems = mutableListOf<Pair<JCheckBox, VirtualFile>>()
+
+    // Lazily built set of paths inside the project — used to filter the + Add picker
+    private val projectSourcePaths: Set<String> by lazy {
+        val paths = mutableSetOf<String>()
+        com.intellij.openapi.application.ApplicationManager.getApplication().runReadAction {
+            ProjectRootManager.getInstance(project).contentSourceRoots.forEach { root ->
+                val p = root.path
+                if (!p.contains("/build/") && !p.contains("/generated/"))
+                    paths.add(p)
+            }
+        }
+        paths
+    }
 
     init {
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
@@ -90,11 +104,27 @@ class SourceFilePicker(
         detectBtn.addActionListener { detectFiles() }
 
         addBtn.addActionListener {
+            // Restrict the file chooser root to the project's source directories
+            // so the user can't accidentally browse their entire Mac filesystem
+            val projectRoot = com.intellij.openapi.application.ApplicationManager.getApplication()
+                .runReadAction<VirtualFile?> {
+                    ProjectRootManager.getInstance(project).contentSourceRoots.firstOrNull()
+                }
+
             val desc = FileChooserDescriptorFactory.createMultipleFilesNoJarsDescriptor().apply {
-                title = "Select Source Files"
+                title       = "Select Source Files"
+                description = "Choose .kt or .java files from the project"
+                // Only show Kotlin and Java files
+                withFileFilter { f -> f.isDirectory || f.extension in listOf("kt", "java") }
             }
-            FileChooser.chooseFiles(desc, project, null) { files ->
-                files.forEach { addFileRow(it, "Manually added", checked = true) }
+
+            FileChooser.chooseFiles(desc, project, projectRoot) { files ->
+                // Extra safety: reject anything outside the project source roots
+                val filtered = files.filter { f -> isInsideProject(f) }
+                filtered.forEach { addFileRow(it, "Manually added", checked = true) }
+                if (filtered.size < files.size) {
+                    statusLabel.text = "⚠ ${files.size - filtered.size} file(s) outside project skipped"
+                }
                 updateStatus()
                 fileListPanel.revalidate()
                 fileListPanel.repaint()
@@ -120,6 +150,21 @@ class SourceFilePicker(
         }
     }
 
+    // Called by MonitorPanel after a session is captured
+    fun enableControls() {
+        detectBtn.isEnabled    = true
+        addBtn.isEnabled       = true
+        selectAllBtn.isEnabled = true
+        deselectBtn.isEnabled  = true
+        clearBtn.isEnabled     = true
+        statusLabel.text       = "Click ⟳ Detect to find relevant source files"
+    }
+
+    private fun isInsideProject(file: VirtualFile): Boolean {
+        val path = file.path
+        return projectSourcePaths.any { path.startsWith(it) }
+    }
+
     private fun detectFiles() {
         detectBtn.isEnabled = false
         statusLabel.text    = "Detecting..."
@@ -127,7 +172,6 @@ class SourceFilePicker(
         checkboxItems.clear()
 
         Thread {
-            // Capture foreground screen at detection time
             val screen   = SourceFileDetector.getForegroundScreen()
             val detected = SourceFileDetector.detectRelevantFiles(project, monitorName, packageName)
 
@@ -142,7 +186,6 @@ class SourceFilePicker(
                 } else {
                     detected.forEach { addFileRow(it.virtualFile, it.reason, checked = it.selected) }
                     updateStatus()
-                    // Append screen name to status so the user knows what was used
                     if (screen != null) {
                         val cur = statusLabel.text
                         statusLabel.text = "$cur  •  from $screen"
@@ -207,7 +250,7 @@ class SourceFilePicker(
     fun buildSourceContext(): String {
         if (selectedFiles.isEmpty()) return ""
 
-        val MAX_TOTAL_CHARS = 12_000   // safe for all providers
+        val MAX_TOTAL_CHARS = 12_000
         val MAX_PER_FILE    = 3_000
 
         val sb = StringBuilder()
@@ -227,14 +270,19 @@ class SourceFilePicker(
                         else it
                     }
                 } else {
+                    // Signatures mode — only declarations, restricted to this file's content
+                    // (never reads outside the VirtualFile so no Mac filesystem access)
                     content.lines()
                         .filter { line ->
                             val t = line.trim()
                             t.startsWith("class ")       || t.startsWith("object ")      ||
                                     t.startsWith("interface ")   || t.startsWith("fun ")         ||
                                     t.startsWith("override fun") || t.startsWith("private fun")  ||
+                                    t.startsWith("protected fun")|| t.startsWith("internal fun") ||
                                     t.startsWith("val ")         || t.startsWith("var ")         ||
-                                    t.startsWith("@")            || t.contains("suspend fun")
+                                    t.startsWith("@")            || t.contains("suspend fun")    ||
+                                    t.startsWith("data class")   || t.startsWith("sealed class") ||
+                                    t.startsWith("enum class")   || t.startsWith("abstract ")
                         }
                         .joinToString("\n")
                         .take(MAX_PER_FILE)
@@ -248,4 +296,5 @@ class SourceFilePicker(
 
         sb.appendLine("\n--- END SOURCE CONTEXT ---")
         return sb.toString()
-    }}
+    }
+}

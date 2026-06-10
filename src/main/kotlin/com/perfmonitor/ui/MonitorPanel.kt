@@ -274,6 +274,7 @@ class MonitorPanel(
                 statusLabel.text         = "Snapshot at ${now()}"
                 clearButton.isEnabled    = true
                 analyseButton.isEnabled  = true
+                sourceFilePicker?.enableControls()
                 setCapturing(false)
             }
         }.start()
@@ -312,6 +313,7 @@ class MonitorPanel(
             statusLabel.text        = "Stopped — ${samples.size} samples at ${now()}"
             clearButton.isEnabled   = samples.isNotEmpty()
             analyseButton.isEnabled = samples.isNotEmpty()
+            if (samples.isNotEmpty()) sourceFilePicker?.enableControls()
             setRecording(false)
         }
     }
